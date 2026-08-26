@@ -487,6 +487,7 @@ async function handleFiles(files) {
 
     const formData = new FormData();
     formData.append("pdf", file);
+    let autoOcr = false;
     try {
       const res = await fetch("/api/parse", { method: "POST", body: formData });
       const data = await res.json();
@@ -500,7 +501,13 @@ async function handleFiles(files) {
         continue;
       }
       state.documents.set(id, { ...data, file });
-      uploadStatus.textContent = `${file.name} lido com sucesso.`;
+      const hasImageWarning = (data.layout_warnings || []).some(w => w.includes("IMAGEM"));
+      if (!data.transactions.length && hasImageWarning) {
+        autoOcr = true;
+        uploadStatus.textContent = `${file.name}: imagem detectada no PDF, iniciando OCR no navegador automaticamente…`;
+      } else {
+        uploadStatus.textContent = `${file.name} lido com sucesso.`;
+      }
       uploadStatus.classList.remove("error");
     } catch (err) {
       state.documents.delete(id);
@@ -511,6 +518,10 @@ async function handleFiles(files) {
     renderDocList();
     renderDetail();
     updateBatchButton();
+
+    if (autoOcr) {
+      await runOcr(id);
+    }
   }
 }
 
