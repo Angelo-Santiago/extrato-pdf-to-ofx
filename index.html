@@ -195,7 +195,7 @@
     <div class="upload-row">
       <div class="left">
         <input id="fileInput" type="file" accept="application/pdf" multiple />
-        <span class="status" id="uploadStatus"></span>
+        <span class="status" id="uploadStatus">Máximo de 4 MB por PDF.</span>
       </div>
       <div class="left">
         <span class="status" id="batchStatus"></span>
@@ -364,14 +364,24 @@ function renderDetail() {
   docDetailEl.querySelector("#docGenerateBtn").addEventListener("click", () => generateOfx(state.selectedId));
 }
 
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+
 async function handleFiles(files) {
   for (const file of files) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      uploadStatus.textContent = `${file.name} (${sizeMb} MB) excede o limite de 4 MB por PDF desta hospedagem e não foi enviado.`;
+      uploadStatus.classList.add("error");
+      continue;
+    }
+
     const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     state.documents.set(id, { name: file.name, loading: true, transactions: [], warnings: [], layout_warnings: [], detected_bank: "" });
     if (state.selectedId === null) state.selectedId = id;
     renderDocList();
     renderDetail();
     uploadStatus.textContent = `Lendo ${file.name}…`;
+    uploadStatus.classList.remove("error");
 
     const formData = new FormData();
     formData.append("pdf", file);
@@ -393,7 +403,7 @@ async function handleFiles(files) {
     } catch (err) {
       state.documents.delete(id);
       if (state.selectedId === id) state.selectedId = null;
-      uploadStatus.textContent = `Erro em ${file.name}: ${err}`;
+      uploadStatus.textContent = `Erro em ${file.name}: falha de conexão com o servidor (${err.message || err}). Verifique sua internet ou tente um arquivo menor.`;
       uploadStatus.classList.add("error");
     }
     renderDocList();
