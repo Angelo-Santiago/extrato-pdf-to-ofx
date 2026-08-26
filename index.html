@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PDF2OFX — Conversor de extratos</title>
+<style>
+  :root {
+    --brand: #12335b;
+    --brand-light: #d7e7f7;
+    --accent: #2b7a55;
+    --bg: #f4f7fb;
+    --panel: #ffffff;
+    --text: #23415f;
+    --muted: #66758a;
+    --warn-bg: #fff8e6;
+    --warn-fg: #9a3412;
+    --credit: #176b43;
+    --debit: #a33d35;
+    --border: #dde6f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--brand);
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { margin: 0; font-size: 1.4rem; }
+  header p { margin: 2px 0 0; font-size: 0.85rem; color: var(--brand-light); }
+  .badge {
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: bold;
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  main {
+    max-width: 1100px;
+    margin: 20px auto;
+    padding: 0 18px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 1rem; color: var(--brand); }
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  input, select {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+  .upload-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button {
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 9px 16px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary { background: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .doc-card { display: flex; flex-direction: column; gap: 10px; }
+  .doc-title { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+  .doc-title h3 { margin: 0; font-size: 0.98rem; }
+  .doc-title span { font-size: 0.8rem; color: var(--muted); }
+  .warning {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    border-radius: 5px;
+    padding: 8px 10px;
+    font-size: 0.82rem;
+    white-space: pre-line;
+  }
+  .info { color: var(--muted); font-size: 0.82rem; white-space: pre-line; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  td input { border: 1px solid transparent; background: transparent; padding: 4px 5px; }
+  td input:hover, td input:focus { border-color: var(--border); background: #fff; }
+  .amount-credit { color: var(--credit); }
+  .amount-debit { color: var(--debit); }
+  .doc-actions { display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
+  .status { font-size: 0.82rem; color: var(--muted); }
+  .status.error { color: var(--debit); }
+  footer { text-align: center; font-size: 0.78rem; color: var(--muted); padding: 10px 0 30px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>PDF2OFX</h1>
+    <p>Conversão local de extratos bancários para OFX</p>
+  </div>
+  <div class="badge">PROCESSAMENTO NO SERVIDOR</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Dados usados no arquivo OFX</h2>
+    <div class="config-grid">
+      <div>
+        <label for="bankSelect">Banco</label>
+        <select id="bankSelect"></select>
+      </div>
+      <div>
+        <label for="accountType">Tipo de conta</label>
+        <select id="accountType">
+          <option value="CHECKING">CHECKING</option>
+          <option value="SAVINGS">SAVINGS</option>
+          <option value="CREDITLINE">CREDITLINE</option>
+        </select>
+      </div>
+      <div>
+        <label for="bankId">Código do banco</label>
+        <input id="bankId" type="text" />
+      </div>
+      <div>
+        <label for="branchId">Agência</label>
+        <input id="branchId" type="text" />
+      </div>
+      <div>
+        <label for="accountId">Conta</label>
+        <input id="accountId" type="text" />
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Importar extratos</h2>
+    <div class="upload-row">
+      <input id="fileInput" type="file" accept="application/pdf" multiple />
+      <span class="status" id="uploadStatus"></span>
+    </div>
+  </section>
+
+  <div id="documents"></div>
+</main>
+
+<footer>PDF2OFX — os PDFs são processados por esta função e descartados após a conversão.</footer>
+
+<script>
+const state = { documents: {} };
+
+const bankSelect = document.getElementById("bankSelect");
+const accountType = document.getElementById("accountType");
+const bankId = document.getElementById("bankId");
+const branchId = document.getElementById("branchId");
+const accountId = document.getElementById("accountId");
+const fileInput = document.getElementById("fileInput");
+const uploadStatus = document.getElementById("uploadStatus");
+const documentsEl = document.getElementById("documents");
+
+async function loadBanks() {
+  const res = await fetch("/api/banks");
+  const banks = await res.json();
+  bankSelect.innerHTML = banks.map(b => `<option value="${b.name}">${b.name}</option>`).join("");
+  bankSelect.addEventListener("change", () => {
+    const bank = banks.find(b => b.name === bankSelect.value);
+    if (bank && bank.name !== "Detecção automática" && !bankId.value.trim()) {
+      bankId.value = bank.code;
+    }
+  });
+}
+
+function formatMoney(value) {
+  const n = Number(value);
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderDocument(id) {
+  const doc = state.documents[id];
+  let card = document.getElementById(`doc-${id}`);
+  if (!card) {
+    card = document.createElement("div");
+    card.id = `doc-${id}`;
+    card.className = "panel doc-card";
+    documentsEl.appendChild(card);
+  }
+
+  const warningsHtml = doc.layout_warnings && doc.layout_warnings.length
+    ? `<div class="warning">⚠ ${doc.warnings.join("  |  ")}</div>`
+    : (doc.warnings && doc.warnings.length ? `<div class="info">${doc.warnings.join("\n")}</div>` : "");
+
+  const rows = doc.transactions.map((t, i) => `
+    <tr>
+      <td><input type="date" data-idx="${i}" data-field="date" value="${t.date}" /></td>
+      <td><input type="text" data-idx="${i}" data-field="memo" value="${t.memo.replace(/"/g, "&quot;")}" /></td>
+      <td>
+        <input type="number" step="0.01" data-idx="${i}" data-field="amount"
+          class="${Number(t.amount) >= 0 ? "amount-credit" : "amount-debit"}" value="${t.amount}" />
+      </td>
+    </tr>
+  `).join("");
+
+  card.innerHTML = `
+    <div class="doc-title">
+      <h3>${doc.name}</h3>
+      <span>${doc.transactions.length} transação(ões) — banco detectado: ${doc.detected_bank}</span>
+    </div>
+    ${warningsHtml}
+    ${doc.transactions.length ? `
+      <table>
+        <thead><tr><th>Data</th><th>Histórico</th><th>Valor (R$)</th></tr></thead>
+        <tbody id="tbody-${id}">${rows}</tbody>
+      </table>
+    ` : ""}
+    <div class="doc-actions">
+      <span class="status" id="status-${id}"></span>
+      <button class="secondary" data-action="generate" data-id="${id}">Gerar e baixar OFX</button>
+    </div>
+  `;
+
+  card.querySelector(`#tbody-${id}`)?.addEventListener("input", (event) => {
+    const input = event.target;
+    const idx = Number(input.dataset.idx);
+    const field = input.dataset.field;
+    if (field === "amount") {
+      input.classList.toggle("amount-credit", Number(input.value) >= 0);
+      input.classList.toggle("amount-debit", Number(input.value) < 0);
+    }
+    doc.transactions[idx][field] = input.value;
+  });
+
+  card.querySelector('[data-action="generate"]').addEventListener("click", () => generateOfx(id));
+}
+
+async function handleFiles(files) {
+  for (const file of files) {
+    const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    uploadStatus.textContent = `Lendo ${file.name}…`;
+    const formData = new FormData();
+    formData.append("pdf", file);
+    try {
+      const res = await fetch("/api/parse", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        uploadStatus.textContent = `Erro em ${file.name}: ${data.error || "falha na leitura"}`;
+        uploadStatus.classList.add("error");
+        continue;
+      }
+      state.documents[id] = data;
+      renderDocument(id);
+      uploadStatus.textContent = `${file.name} lido com sucesso.`;
+      uploadStatus.classList.remove("error");
+    } catch (err) {
+      uploadStatus.textContent = `Erro em ${file.name}: ${err}`;
+      uploadStatus.classList.add("error");
+    }
+  }
+}
+
+async function generateOfx(id) {
+  const doc = state.documents[id];
+  const statusEl = document.getElementById(`status-${id}`);
+  statusEl.textContent = "Gerando…";
+  statusEl.classList.remove("error");
+  try {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_name: doc.name,
+        bank_name: bankSelect.value,
+        account_type: accountType.value,
+        bank_id: bankId.value,
+        branch_id: branchId.value,
+        account_id: accountId.value,
+        transactions: doc.transactions,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.error + (data.issues ? ": " + data.issues.join(" ") : "");
+      statusEl.classList.add("error");
+      return;
+    }
+    const blob = new Blob([data.ofx], { type: "application/x-ofx" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = data.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    statusEl.textContent = "OFX baixado.";
+  } catch (err) {
+    statusEl.textContent = `Erro: ${err}`;
+    statusEl.classList.add("error");
+  }
+}
+
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) {
+    handleFiles(Array.from(fileInput.files));
+    fileInput.value = "";
+  }
+});
+
+loadBanks();
+</script>
+</body>
+</html>
