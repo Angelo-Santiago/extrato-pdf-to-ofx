@@ -17,8 +17,10 @@ from converter_core import (  # noqa: E402
     BANKS,
     ParsedDocument,
     Transaction,
+    detect_bank,
     generate_ofx,
     parse_pdf,
+    parse_transactions,
     safe_output_name,
     validate_document,
 )
@@ -63,6 +65,27 @@ def parse():
             "transactions": [
                 {"date": t.date.isoformat(), "memo": t.memo, "amount": str(t.amount)}
                 for t in document.transactions
+            ],
+        }
+    )
+
+
+@app.route("/api/parse_text", methods=["POST"])
+def parse_text():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "extrato.pdf")
+    text = str(payload.get("text") or "")
+
+    transactions, warnings = parse_transactions(text)
+    return jsonify(
+        {
+            "name": name,
+            "detected_bank": detect_bank(text),
+            "warnings": warnings,
+            "layout_warnings": [],
+            "transactions": [
+                {"date": t.date.isoformat(), "memo": t.memo, "amount": str(t.amount)}
+                for t in transactions
             ],
         }
     )

@@ -139,6 +139,7 @@
   .amount-credit { color: var(--credit); }
   .amount-debit { color: var(--debit); }
   .doc-actions { display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
+  .doc-actions.ocr-row { justify-content: flex-start; flex-wrap: wrap; }
   .status { font-size: 0.82rem; color: var(--muted); }
   .status.error { color: var(--debit); }
   footer { text-align: center; font-size: 0.78rem; color: var(--muted); padding: 10px 0 30px; }
@@ -220,6 +221,11 @@
 
 <footer>PDF2OFX — os PDFs são processados por esta função e descartados após a conversão.</footer>
 
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3/build/pdf.worker.min.js";
+</script>
 <script>
 const state = { documents: new Map(), selectedId: null };
 
@@ -319,6 +325,16 @@ function renderDetail() {
     ? `<div class="warning">⚠ ${doc.warnings.map(escapeHtml).join("  |  ")}</div>`
     : (doc.warnings && doc.warnings.length ? `<div class="info">${doc.warnings.map(escapeHtml).join("\n")}</div>` : "");
 
+  const ocrHtml = (!doc.transactions.length && doc.file)
+    ? `<div class="doc-actions ocr-row">
+        ${doc.ocrRunning
+          ? `<span class="status" id="docOcrStatus">${escapeHtml(doc.ocrStatusText || "Rodando OCR…")}</span>`
+          : `<button id="ocrBtn">Tentar OCR no navegador</button>
+             <span class="status" id="docOcrStatus">Roda no seu computador; baixa um pacote de idioma (alguns MB) na primeira vez.</span>`
+        }
+      </div>`
+    : "";
+
   const rows = doc.transactions.map((t, i) => `
     <tr>
       <td><input type="date" data-idx="${i}" data-field="date" value="${escapeHtml(t.date)}" /></td>
@@ -336,6 +352,7 @@ function renderDetail() {
       <span>${doc.transactions.length} transação(ões) — banco detectado: ${escapeHtml(doc.detected_bank)}</span>
     </div>
     ${warningsHtml}
+    ${ocrHtml}
     ${doc.transactions.length ? `
       <div class="table-scroll">
         <table>
@@ -362,6 +379,91 @@ function renderDetail() {
   });
 
   docDetailEl.querySelector("#docGenerateBtn").addEventListener("click", () => generateOfx(state.selectedId));
+  docDetailEl.querySelector("#ocrBtn")?.addEventListener("click", () => runOcr(state.selectedId));
+}
+
+async function runOcr(id) {
+  const doc = state.documents.get(id);
+  if (!doc || !doc.file) return;
+
+  doc.ocrRunning = true;
+  doc.ocrStatusText = "Preparando OCR…";
+  renderDetail();
+
+  const setStatus = (text) => {
+    doc.ocrStatusText = text;
+    if (state.selectedId === id) {
+      const el = docDetailEl.querySelector("#docOcrStatus");
+      if (el) el.textContent = text;
+    }
+  };
+
+  let worker = null;
+  try {
+    const buffer = await doc.file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    worker = await Tesseract.createWorker("por+eng", 1, {
+      logger: (m) => {
+        if (m.status === "recognizing text" && typeof m.progress === "number") {
+          setStatus(`OCR em andamento… (${Math.round(m.progress * 100)}%)`);
+        }
+      },
+    });
+
+    const pageTexts = [];
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      if (!state.documents.has(id)) return;
+      setStatus(`Renderizando página ${pageNum}/${pdf.numPages}…`);
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+
+      setStatus(`OCR na página ${pageNum}/${pdf.numPages}…`);
+      const { data } = await worker.recognize(canvas);
+      pageTexts.push(data.text || "");
+    }
+    await worker.terminate();
+    worker = null;
+
+    if (!state.documents.has(id)) return;
+    setStatus("Interpretando transações…");
+
+    const res = await fetch("/api/parse_text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: doc.name, text: pageTexts.join("\n") }),
+    });
+    const result = await res.json();
+    if (!state.documents.has(id)) return;
+
+    if (!res.ok) {
+      doc.ocrRunning = false;
+      doc.ocrStatusText = "";
+      uploadStatus.textContent = `Erro ao interpretar o texto do OCR de ${doc.name}: ${result.error || "falha"}`;
+      uploadStatus.classList.add("error");
+      renderDocList();
+      renderDetail();
+      return;
+    }
+
+    state.documents.set(id, { ...result, file: doc.file });
+    uploadStatus.textContent = `OCR de ${doc.name} concluído: ${result.transactions.length} transação(ões).`;
+    uploadStatus.classList.remove("error");
+    renderDocList();
+    renderDetail();
+    updateBatchButton();
+  } catch (err) {
+    if (worker) await worker.terminate();
+    if (!state.documents.has(id)) return;
+    doc.ocrRunning = false;
+    doc.ocrStatusText = "";
+    uploadStatus.textContent = `Erro no OCR de ${doc.name}: ${err.message || err}`;
+    uploadStatus.classList.add("error");
+    renderDetail();
+  }
 }
 
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
@@ -376,7 +478,7 @@ async function handleFiles(files) {
     }
 
     const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    state.documents.set(id, { name: file.name, loading: true, transactions: [], warnings: [], layout_warnings: [], detected_bank: "" });
+    state.documents.set(id, { name: file.name, file, loading: true, transactions: [], warnings: [], layout_warnings: [], detected_bank: "" });
     if (state.selectedId === null) state.selectedId = id;
     renderDocList();
     renderDetail();
@@ -397,7 +499,7 @@ async function handleFiles(files) {
         renderDetail();
         continue;
       }
-      state.documents.set(id, data);
+      state.documents.set(id, { ...data, file });
       uploadStatus.textContent = `${file.name} lido com sucesso.`;
       uploadStatus.classList.remove("error");
     } catch (err) {
